@@ -157,30 +157,6 @@ def convert_to_tuple(data: Dict):
         return tuple(row)
 
 
-# def concat_filename(source: str, file_path: str):
-#     prefixes = re.split(r"/|\.", file_path)
-#     return f"parsed/{source}/{'_'.join(prefixes[4:-1])}.csv"
-#
-#
-# def create_directory(directory: str):
-#     import os
-#
-#     exists = os.path.exists(directory)
-#     if not exists:
-#         os.makedirs(directory)
-#         print(f"created folder {directory}")
-
-
-# def write_to_csv(file_name: str, data: List[List], header: List = None):
-#     with open(file_name, "w") as f:
-#         # using default params
-#         writer = csv.writer(f)
-#         if header:
-#             writer.writerow(header)
-#         for d in data:
-#             writer.writerow(d)
-
-
 def parsing_a_file(source: str, path: str, batch: List, keys: List):
     # json loads into a variable
     # call parser
@@ -236,46 +212,47 @@ def process():
     manifold = Database()
 
     with open("./process/process.yml") as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+        config = yaml.load(f, Loader=yaml.FullLoader)["process"]
         print(f"reading config...\n{config}")
 
     # read yaml
     # traverse folders
-    start = time.time()
-    for source in config["process"]:
-        s_start = time.time()
-        print(f"fetching file list for {source}...")
-        paths = traverse_and_fetch_paths(source)
+    if config:
+        start = time.time()
+        for source in config["process"]:
+            s_start = time.time()
+            print(f"fetching file list for {source}...")
+            paths = traverse_and_fetch_paths(source)
 
-        for p in paths:
-            p_start = time.time()
-            current_batch, f_stats = parsing_a_file(
-                source=source,
-                path=p,
-                batch=current_batch,
-                keys=["first_name", "middle_name", "last_name", "zip_code"],
-            )
-            files_processed.append(f_stats)
+            for p in paths:
+                p_start = time.time()
+                current_batch, f_stats = parsing_a_file(
+                    source=source,
+                    path=p,
+                    batch=current_batch,
+                    keys=["first_name", "middle_name", "last_name", "zip_code"],
+                )
+                files_processed.append(f_stats)
 
-            # batching
-            if len(current_batch) > batch_size:
-                print(f"batch size of {batch_size} reached, dumping...")
-                manifold.insert_into_users(rows=current_batch)
-                current_batch = []
+                # batching
+                if len(current_batch) > batch_size:
+                    print(f"batch size of {batch_size} reached, dumping...")
+                    manifold.insert_into_users(rows=current_batch)
+                    current_batch = []
 
-            if len(files_processed) > batch_size:
-                print(f"batch size of {batch_size} reached, dumping...")
-                manifold.insert_into_process(rows=files_processed)
-                files_processed = []
+                if len(files_processed) > batch_size:
+                    print(f"batch size of {batch_size} reached, dumping...")
+                    manifold.insert_into_process(rows=files_processed)
+                    files_processed = []
 
-            print(f"{p} processed in {time.time() - p_start}s")
-        print(f"source: {source} processed in {time.time() - s_start}s")
+                print(f"{p} processed in {time.time() - p_start}s")
+            print(f"source: {source} processed in {time.time() - s_start}s")
 
-    manifold.insert_into_users(rows=current_batch)
-    manifold.insert_into_process(rows=files_processed)
-    print(f"data processed in {time.time() - start}s")
+        manifold.insert_into_users(rows=current_batch)
+        manifold.insert_into_process(rows=files_processed)
+        print(f"data processed in {time.time() - start}s")
+        manifold.check_sum()
 
-    manifold.check_sum()
     manifold.get_stats()
     manifold.close()
 
