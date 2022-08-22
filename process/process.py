@@ -1,15 +1,16 @@
 # process.py
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import time
-import sys
 import os.path
 import json
 import sqlite3
-import yaml
+import logging
+from datetime import datetime
 
-
-# import csv
-# import re
+TODAY = datetime.today().strftime(format="%Y_%m_%dT%H%M%S%fZ")
+logging.basicConfig(filename=f"./logs/{TODAY}_process.log", level=logging.INFO)
+LOG = logging.getLogger()
+LOG.setLevel(logging.INFO)
 
 
 class Database:
@@ -18,9 +19,25 @@ class Database:
         try:
             self.conn = sqlite3.connect(path)
         except sqlite3.Error as e:
-            print(f"SQLite error: {' '.join(e.args)}")
+            LOG.error(f"SQLite error: {' '.join(e.args)}")
 
-    def execute(self, sql, rows=None, fetch=False, all_results=False):
+    def execute(
+        self,
+        sql: str,
+        rows: List[Tuple] = None,
+        fetch: bool = False,
+        all_results: bool = False,
+    ):
+        """
+        Wrapper around sqlite3 execute
+        :param sql: SQL command to run
+        :param rows: List of tuples supplied for executemany
+        :param fetch: Bool to return results from execution
+        :param all_results: Default to False and only return one result,
+        if set to true return all
+        :return:
+        """
+
         cur = self.conn.cursor()
         try:
             if rows:
@@ -34,44 +51,43 @@ class Database:
                     return cur.fetchall()
                 return cur.fetchone()
 
-            print(
+            LOG.info(
                 f"Successfully executed!\n"
                 f"current row count {cur.rowcount}\n"
                 f"last row id {cur.lastrowid}"
             )
         except sqlite3.Error as e:
-            print(f"SQLite error: {' '.join(e.args)}")
+            LOG.error(f"SQLite error: {' '.join(e.args)}")
+            LOG.error(f"SQL: {sql}\n{rows}")
             self.conn.rollback()
             self.conn.close()
 
-    def purge_tables(self):
-        tables = self.execute(
-            sql="SELECT name FROM sqlite_master WHERE type='table';",
-            fetch=True,
-            all_results=True,
-        )
-
-        for t in tables:
-            t = t[0]
-            print(f"purging table: {t}")
-            self.execute(sql=f"DELETE FROM {t};")
-
-    def insert_into_users(self, rows):
-        print("inserting into table users")
+    def insert_into_users(self, rows: List[Tuple]):
+        LOG.info("Inserting into table users")
         self.execute(sql="INSERT INTO users VALUES (?, ?, ?, ?)", rows=rows)
 
-    def insert_into_process(self, rows):
-        print("inserting into table process")
+    def insert_into_process(self, rows: List[Tuple]):
+        LOG.info("Inserting into table process")
         self.execute(sql="INSERT INTO process VALUES (?, ?, ?, ?, ?, ?)", rows=rows)
 
     def check_sum(self):
+        """
+        Run SQL to check sum of processed and number of existing rows
+        :return: None
+        """
+
         processed = self.execute(sql="SELECT sum(processed) from process;", fetch=True)[
             0
         ]
         rows = self.execute(sql="SELECT count(*) from users;", fetch=True)[0]
-        print(f"Rows processed: {processed}, Rows in users: {rows}")
+        LOG.info(f"Rows processed: {processed}, Rows in users: {rows}")
 
-    def get_stats(self):
+    def get_stats(self) -> Dict:
+        """
+        Run SQL to get list of stats
+        :return: Dict
+        """
+
         top_10_skipped = self.execute(
             sql="SELECT file_name FROM process ORDER BY skipped DESC limit 10;",
             fetch=True,
@@ -84,7 +100,7 @@ class Database:
             all_results=True,
         )
 
-        top_10_zip_codes = self.execute(
+        top_10_zip_codes_unique = self.execute(
             sql="""
                 /* zip_code and their counts where */
                 SELECT d2.zip_code, count(*)
@@ -110,38 +126,61 @@ class Database:
             all_results=True,
         )
 
-        print(
-            f"top 10 skipped files: {top_10_skipped}\n"
-            f"top 10 processed files: {top_10_processed}\n"
-            f"top 10 zip codes with the most unique last names: {top_10_zip_codes}"
+        top_10_zip_codes = self.execute(
+            sql="SELECT zip_code, count(*) FROM users WHERE zip_code != '' GROUP BY zip_code ORDER BY 2 DESC limit 10;",
+            fetch=True,
+            all_results=True,
         )
 
+        return {
+            "top_10_processed": [e[0] for e in top_10_processed],
+            "top_10_skipped": [e[0] for e in top_10_skipped],
+            "top_10_zip_codes_w_unique_last_names": [
+                e[0] for e in top_10_zip_codes_unique
+            ],
+            "top_10_zip_codes": [e[0] for e in top_10_zip_codes],
+        }
+
     def close(self):
-        print("closing connection to db")
+        """
+        Close connection to DB
+        :return: None
+        """
+
+        LOG.info("Closing connection to db")
         self.conn.close()
 
 
-def parser(data: Dict, keys: List[str], vals: Dict, count: int = 0):
-    # return the keys and values
-    # return body should be
-    # all the keys you found with values
-    # if none found
-    # return {}
+def parser(data: Dict, keys: List[str], vals: Dict, count: int = 0) -> Dict:
+    """
+    Parse the data for the list of keys and its values
+    :param data: Dict
+    :param keys: List of keys to look for
+    :param vals: Values if found
+    :param count: Int value of the number of found keys,
+    if all are found do not traverse the rest of the dictionary
+    :return: The found subset of keys and values
+    """
+
     if isinstance(data, dict):
         for key, val in data.items():
             if key in keys:
                 vals[key] = val
                 count = count + 1
-                # if all elements are found
                 if count == len(keys):
                     return vals
             if isinstance(val, dict):
                 return parser(val, keys, count=count, vals=vals)
-        # print(vals)
         return vals
 
 
-def convert_to_tuple(data: Dict):
+def convert_to_tuple(data: Dict) -> Tuple:
+    """
+    Convert the data to a tuple representing a row in the table Users
+    :param data: Parsed dict
+    :return: The data in tuple format
+    """
+
     # header: [first_name, middle_name, last_name, zip_code]
     if data:
         row = [None] * 4
@@ -157,37 +196,19 @@ def convert_to_tuple(data: Dict):
         return tuple(row)
 
 
-# def concat_filename(source: str, file_path: str):
-#     prefixes = re.split(r"/|\.", file_path)
-#     return f"parsed/{source}/{'_'.join(prefixes[4:-1])}.csv"
-#
-#
-# def create_directory(directory: str):
-#     import os
-#
-#     exists = os.path.exists(directory)
-#     if not exists:
-#         os.makedirs(directory)
-#         print(f"created folder {directory}")
+def parsing_a_file(
+    source: str, path: str, batch: List[Tuple], keys: List[str]
+) -> (List[Tuple], Tuple):
+    """
+    Parse a json file
 
+    :param source: Top subdirectory
+    :param path: Path to file
+    :param batch: Batch of processed data
+    :param keys: Keys to look for in the json file
+    :return: List of processed data, and meta of the file processed
+    """
 
-# def write_to_csv(file_name: str, data: List[List], header: List = None):
-#     with open(file_name, "w") as f:
-#         # using default params
-#         writer = csv.writer(f)
-#         if header:
-#             writer.writerow(header)
-#         for d in data:
-#             writer.writerow(d)
-
-
-def parsing_a_file(source: str, path: str, batch: List, keys: List):
-    # json loads into a variable
-    # call parser
-    # parsed into row
-    # keep track of number of processed
-    # keep track of number of skipped
-    # return filename, number of processed, number of skipped
     records, processed, skipped = 0, 0, 0
     f_name = path.split("/")[-1]
 
@@ -195,8 +216,8 @@ def parsing_a_file(source: str, path: str, batch: List, keys: List):
         try:
             data = json.loads(json.load(f))
         except json.JSONDecodeError as e:
-            print(e)
-            sys.exit(1)
+            LOG.info(e)
+            return batch, None
 
     for d in data:
         records = records + 1
@@ -206,77 +227,95 @@ def parsing_a_file(source: str, path: str, batch: List, keys: List):
             batch.append(convert_to_tuple(d))
         else:
             skipped = skipped + 1
-
-    assert processed + skipped == records
-    # f_name = concat_filename(source, path)
-    # create_directory(f"./parsed/{source}")
-    # write_to_csv(f_name, rows, keys)
     return batch, (source, path, f_name, processed, skipped, records)
 
 
-def traverse_and_fetch_paths(source):
-    base = f"./data/{source}"
-    start = time.time()
+def traverse_and_fetch_paths(source: str = None) -> List[str]:
+    """
+    Traverse data directory
+    :param source: root if not provided, traverses the first level of the data directory
+    :return: list of file paths
+    """
+    base = "./data"
     paths = []
-    for path, subdir, files in os.walk(base):
-        for name in files:
-            if name.split(".")[-1] == "json":
-                paths.append(os.path.join(path, name))
-    print(
-        f"traversed {base} in {time.time() - start}s\nand discovered {len(paths)} files"
-    )
-    return paths
+
+    if not source:
+        return os.listdir(base)
+    else:
+        base = f"{base}/{source}"
+
+        start = time.time()
+        for path, subdir, files in os.walk(base):
+            for name in files:
+                if name.split(".")[-1] == "json":
+                    paths.append(os.path.join(path, name))
+        LOG.info(
+            f"Traversed {base} in {time.time() - start}s and discovered {len(paths)} files"
+        )
+        return paths
 
 
 def process():
     # this is where your code goes
+
     batch_size = 10000
     files_processed = []
     current_batch = []
+
+    source = traverse_and_fetch_paths()
     manifold = Database()
 
-    with open("./process/process.yml") as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-        print(f"reading config...\n{config}")
-
-    # read yaml
-    # traverse folders
     start = time.time()
-    for source in config["process"]:
+    for s in source:
+        if s in [".DS_Store"]:
+            continue
+
         s_start = time.time()
-        print(f"fetching file list for {source}...")
-        paths = traverse_and_fetch_paths(source)
+        LOG.info(f"Fetching file list for {s}...")
+        paths = traverse_and_fetch_paths(s)
+
+        if len(paths) == 0:
+            LOG.info("No json files found")
+            return None
 
         for p in paths:
             p_start = time.time()
             current_batch, f_stats = parsing_a_file(
-                source=source,
+                source=s,
                 path=p,
                 batch=current_batch,
                 keys=["first_name", "middle_name", "last_name", "zip_code"],
             )
-            files_processed.append(f_stats)
+            if f_stats:
+                files_processed.append(f_stats)
 
             # batching
+
             if len(current_batch) > batch_size:
-                print(f"batch size of {batch_size} reached, dumping...")
+                LOG.info(
+                    f"{len(current_batch)} Surpassed batch size of 10000, dumping..."
+                )
                 manifold.insert_into_users(rows=current_batch)
                 current_batch = []
 
             if len(files_processed) > batch_size:
-                print(f"batch size of {batch_size} reached, dumping...")
+                LOG.info(
+                    f"{len(files_processed)} Surpassed batch size of 10000, dumping..."
+                )
                 manifold.insert_into_process(rows=files_processed)
                 files_processed = []
 
-            print(f"{p} processed in {time.time() - p_start}s")
-        print(f"source: {source} processed in {time.time() - s_start}s")
+            LOG.info(f"{p} processed in {time.time() - p_start}s")
+        LOG.info(f"Source: {s} processed in {time.time() - s_start}s")
 
     manifold.insert_into_users(rows=current_batch)
     manifold.insert_into_process(rows=files_processed)
-    print(f"data processed in {time.time() - start}s")
 
+    LOG.info(f"Data processed in {time.time() - start}s")
     manifold.check_sum()
-    manifold.get_stats()
+    results = manifold.get_stats()
+    print(results)
+
     manifold.close()
 
 

@@ -1,27 +1,46 @@
-things i thought during the process
-writing to file batch or continuous
-flat file vs csv for intermediate data store
-batch process vs individual record process for when converting json to structured row
+### Instructions on running against new data:
+Script assumes data to be loaded in the existing data directory `data/<new_source>/.../file.json`
 
-if youve got multiple instances running the process function
+running via docker containers assuming docker is already installed:
+```
+# spinning containers process and sqlite3 commandline
+make init 
 
-might want an id for users with the same first last name and live in the same zipcode
-maybe not unless your extending the table then yes
-process json before and not during the insert into database for less compute
-ideally you wouldnt be using a yaml file to distinguish whether file needs processing
+# running process against new data
+make run
 
-user table would have a unique pk to identify each user
+# resets the tables in the sqlite3 database
+make reset
 
-divide data into smaller chunks first
-before processing
+# stopping and removing the containers
+make finish
+```
 
+running locally, assuming python3 is already installed:
+```
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python3 process/process.py
+pytest tests/test_process.py 
 
-ideally you would be importing file for loading
-rather than storing data in memory
-for bigger files chunking/partitioning of data
+# when finished
+deactivate 
+```
 
-assuming all filenames are unique
+#### Assumptions:
+- System has docker/or python installed when running via container/or locally and on linux/mac os
+- The new data has similar folder structure being `<source>/.../file.json`
+- There are no duplicates in the data
+- Assumes the json data files are properly formatted and clean with no malformities
 
-
-pool of connections rather than opening and closing frequently
-
+#### Shortcomings:
+- Processing the data in memory: In a production pipeline you might be storing the parsed and transformed data in 
+intermediate files for further processing downstreaming and for tracability.
+Importing the flat files for loading via sql to a structured database at the end of your pipeline, 
+rather than storing the parsed data in memory and calling the database directly.
+- The script traverses through the whole data directory and 
+processes all existing files rather than just select ones. I had initially
+used a yaml file to identify new sources that need processing but
+it would require the user to update the yaml file everytime.
+- Assumptions of the source input data as being clean is one of the shortcomings.
