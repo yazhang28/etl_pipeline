@@ -3,6 +3,7 @@ Script assumes data to be loaded in the existing data directory `data/<new_sourc
 
 running via docker containers assuming docker is already installed:
 ```
+# Run the following at the same level of the makefile
 # spinning containers process and sqlite3 commandline
 make init 
 
@@ -18,6 +19,8 @@ make finish
 
 running locally, assuming python3 is already installed:
 ```
+# Run the following within the top level of this directory
+
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -43,4 +46,4 @@ rather than storing the parsed data in memory and calling the database directly.
 processes all existing files rather than just select ones. I had initially
 used a yaml file to identify new sources that need processing but
 it would require the user to update the yaml file everytime.
-- Assumptions of the source input data as being clean is one of the shortcomings.
+- Assumptions of the source input data as being clean.
